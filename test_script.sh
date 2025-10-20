@@ -97,7 +97,7 @@ DEFAULT_CROP_BOTTOM_PERCENT=20
 MIRROR_ENABLE=false
 
 # Speed factor (applies to composed main video + main audio)
-SPEED_FACTOR="2"
+SPEED_FACTOR="1"
 
 # Brightness adjustment for final output (-1.0 .. 1.0)
 BRIGHTNESS="0.1"

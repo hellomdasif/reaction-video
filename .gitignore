@@ -1,1 +1,6 @@
+.DS_Store
+.venv/
 output/
+overlay/
+input.mp4
+*.mp4
