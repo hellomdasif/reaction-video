@@ -72,7 +72,7 @@ OVERLAY_EDGE_TRIM_LEFT=""    # Pixels to crop from left edge or "auto"
 OVERLAY_EDGE_TRIM_RIGHT=""   # Pixels to crop from right edge or "auto"
 OVERLAY_AUTO_TRIM_THRESHOLD=25   # Brightness threshold for auto edge trim (0-255)
 OVERLAY_AUTO_TRIM_MARGIN=6       # Extra pixels to trim beyond detected edge (safety buffer)
-OVERLAY_SPEED_FACTOR="1.0"        # Overlay-only speed multiplier (1.0 = original)
+OVERLAY_SPEED_FACTOR="4.0"        # Overlay-only speed multiplier (1.0 = original)
 
 # ========== END OVERLAY SETTINGS ==========
 
@@ -97,7 +97,7 @@ DEFAULT_CROP_BOTTOM_PERCENT=20
 MIRROR_ENABLE=false
 
 # Speed factor (applies to composed main video + main audio)
-SPEED_FACTOR="0.9"
+SPEED_FACTOR="1"
 
 # Brightness adjustment for final output (-1.0 .. 1.0)
 BRIGHTNESS="0.1"
@@ -1086,16 +1086,16 @@ fi
 if [ "$CAPTION_ENABLE" = "true" ]; then
   BASE_FILTER="color=c=black:s=1080x1920:d=${EFFECTIVE_DURATION}[canvas]; \
 [${INPUT_INDEX}:v]trim=duration=${INPUT_READ_DURATION},setpts=PTS-STARTPTS,${ROTATION_FILTER}${CROP_FILTER}scale=1080:-1,${MIRROR_FILTER}format=yuva420p[main_video]; \
-[${OVERLAY_INDEX}:v]trim=duration=${OVERLAY_READ_DURATION},setpts=PTS-STARTPTS,${OVERLAY_PRE_EFFECTS}${OVERLAY_SIZE_FILTER},${OVERLAY_EFFECTS}fps=${TARGET_FPS},setpts=PTS/${OVERLAY_SPEED_FACTOR_N},format=yuva420p[overlay_video]; \
+[${OVERLAY_INDEX}:v]trim=duration=${OVERLAY_READ_DURATION},setpts=PTS-STARTPTS,${OVERLAY_PRE_EFFECTS}${OVERLAY_SIZE_FILTER},${OVERLAY_EFFECTS}fps=${TARGET_FPS},setpts=PTS/${OVERLAY_SPEED_FACTOR_N},tpad=stop_mode=clone:stop_duration=${INPUT_READ_DURATION},format=yuva420p[overlay_video]; \
 [canvas][main_video]overlay=(W-w)/2:${MAIN_Y}[bg_with_main]; \
-[bg_with_main][overlay_video]overlay=${OVERLAY_X}:${OVERLAY_Y}:format=auto:alpha=straight[layout_complete]; \
+[bg_with_main][overlay_video]overlay=${OVERLAY_X}:${OVERLAY_Y}:format=auto:alpha=straight:eof_action=repeat[layout_complete]; \
 [layout_complete][${CAPTION_INDEX}:v]overlay=0:0,setsar=1,format=yuv420p,fps=${TARGET_FPS},setpts=PTS/${SPEED_FACTOR_N}[composed_main]"
 else
   BASE_FILTER="color=c=black:s=1080x1920:d=${EFFECTIVE_DURATION}[canvas]; \
 [${INPUT_INDEX}:v]trim=duration=${INPUT_READ_DURATION},setpts=PTS-STARTPTS,${ROTATION_FILTER}${CROP_FILTER}scale=1080:-1,${MIRROR_FILTER}format=yuva420p[main_video]; \
-[${OVERLAY_INDEX}:v]trim=duration=${OVERLAY_READ_DURATION},setpts=PTS-STARTPTS,${OVERLAY_PRE_EFFECTS}${OVERLAY_SIZE_FILTER},${OVERLAY_EFFECTS}fps=${TARGET_FPS},setpts=PTS/${OVERLAY_SPEED_FACTOR_N},format=yuva420p[overlay_video]; \
+[${OVERLAY_INDEX}:v]trim=duration=${OVERLAY_READ_DURATION},setpts=PTS-STARTPTS,${OVERLAY_PRE_EFFECTS}${OVERLAY_SIZE_FILTER},${OVERLAY_EFFECTS}fps=${TARGET_FPS},setpts=PTS/${OVERLAY_SPEED_FACTOR_N},tpad=stop_mode=clone:stop_duration=${INPUT_READ_DURATION},format=yuva420p[overlay_video]; \
 [canvas][main_video]overlay=(W-w)/2:${MAIN_Y}[bg_with_main]; \
-[bg_with_main][overlay_video]overlay=${OVERLAY_X}:${OVERLAY_Y}:format=auto:alpha=straight,setsar=1,format=yuv420p,fps=${TARGET_FPS},setpts=PTS/${SPEED_FACTOR_N}[composed_main]"
+[bg_with_main][overlay_video]overlay=${OVERLAY_X}:${OVERLAY_Y}:format=auto:alpha=straight:eof_action=repeat,setsar=1,format=yuv420p,fps=${TARGET_FPS},setpts=PTS/${SPEED_FACTOR_N}[composed_main]"
 fi
 
 # Assemble filter complex incrementally
@@ -1177,11 +1177,11 @@ if [ "$OVERLAY_AUDIO_ENABLE" = "true" ]; then
   # Build base mixed audio (main + overlay) - use amerge with proper volume normalization
   if [ -n "$AUDIO_TEMPO_CHAIN" ]; then
     BASE_AUDIO_MIX="[0:a]atrim=duration=${INPUT_READ_DURATION},asetpts=PTS-STARTPTS,${AUDIO_TEMPO_CHAIN}[main_tempo]; \
-[${OVERLAY_INDEX}:a]atrim=duration=${OVERLAY_READ_DURATION},${OVERLAY_AUDIO_RATE_FILTER},volume=${OVERLAY_VOLUME_FLOAT}[overlay_vol]; \
+[${OVERLAY_INDEX}:a]atrim=duration=${OVERLAY_READ_DURATION},${OVERLAY_AUDIO_RATE_FILTER},apad=pad_dur=${INPUT_READ_DURATION},volume=${OVERLAY_VOLUME_FLOAT}[overlay_vol]; \
 [main_tempo][overlay_vol]amix=inputs=2:duration=longest:dropout_transition=2,volume=2[base_mixed]"
   else
     BASE_AUDIO_MIX="[0:a]atrim=duration=${INPUT_READ_DURATION},asetpts=PTS-STARTPTS[main_a]; \
-[${OVERLAY_INDEX}:a]atrim=duration=${OVERLAY_READ_DURATION},${OVERLAY_AUDIO_RATE_FILTER},volume=${OVERLAY_VOLUME_FLOAT}[overlay_vol]; \
+[${OVERLAY_INDEX}:a]atrim=duration=${OVERLAY_READ_DURATION},${OVERLAY_AUDIO_RATE_FILTER},apad=pad_dur=${INPUT_READ_DURATION},volume=${OVERLAY_VOLUME_FLOAT}[overlay_vol]; \
 [main_a][overlay_vol]amix=inputs=2:duration=longest:dropout_transition=2,volume=2[base_mixed]"
   fi
 
