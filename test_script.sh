@@ -56,8 +56,8 @@ OVERLAY_CUSTOM_X=0
 OVERLAY_CUSTOM_Y=1200
 
 # Overlay size settings
-OVERLAY_WIDTH=880               # Width in pixels (max 1080 for full width)
-OVERLAY_HEIGHT=""                # Height in pixels (leave empty for auto based on aspect ratio)
+OVERLAY_WIDTH="100%"               # Width in pixels (max 1080 for full width)
+OVERLAY_HEIGHT="50%"             # Height in pixels (leave empty for auto based on aspect ratio)
 OVERLAY_SCALE_PERCENT=100        # Scale as percentage (100 = original size, 50 = half size)
 
 # Overlay effects
@@ -68,12 +68,16 @@ OVERLAY_CHROMA_KEY_SIMILARITY=0.12 # 0.0-1.0, tuned to keep subject visible
 OVERLAY_CHROMA_KEY_BLEND=0.05     # 0.0-1.0, mild blend to soften edges
 # Optional manual edge trims (pixels). Set to >0 to remove borders after chroma key.
 OVERLAY_EDGE_TRIM="LEFT/RIGHT"             # deprecated: use LEFT/RIGHT below
-OVERLAY_EDGE_TRIM_LEFT="310"    # Pixels to crop from left edge or "auto"
-OVERLAY_EDGE_TRIM_RIGHT="310"   # Pixels to crop from right edge or "auto"
+OVERLAY_EDGE_TRIM_LEFT=""    # Pixels to crop from left edge or "auto"
+OVERLAY_EDGE_TRIM_RIGHT=""   # Pixels to crop from right edge or "auto"
 OVERLAY_AUTO_TRIM_THRESHOLD=25   # Brightness threshold for auto edge trim (0-255)
 OVERLAY_AUTO_TRIM_MARGIN=6       # Extra pixels to trim beyond detected edge (safety buffer)
+OVERLAY_SPEED_FACTOR="2.0"        # Overlay-only speed multiplier (1.0 = original)
 
 # ========== END OVERLAY SETTINGS ==========
+
+CANVAS_WIDTH=1080
+CANVAS_HEIGHT=1920
 
 # Crop settings: enable independent top/bottom cropping
 CROP_ENABLE=true
@@ -202,18 +206,6 @@ fi
 FPS_RAW=$(probe_framerate "$OVERLAY_FILE" || true)
 echo "Overlay native resolution: ${O_W}x${O_H} native-fps:${FPS_RAW} -> using TARGET_FPS=${TARGET_FPS}" >&2
 
-# ========== Calculate overlay dimensions and position ==========
-# Apply scale percentage
-if [ -z "$OVERLAY_HEIGHT" ]; then
-  # Auto height based on aspect ratio
-  OVERLAY_FINAL_WIDTH=$(awk -v w="$OVERLAY_WIDTH" -v s="$OVERLAY_SCALE_PERCENT" 'BEGIN{printf("%d", w*s/100)}')
-  OVERLAY_SIZE_FILTER="scale=${OVERLAY_FINAL_WIDTH}:-1"
-else
-  OVERLAY_FINAL_WIDTH=$(awk -v w="$OVERLAY_WIDTH" -v s="$OVERLAY_SCALE_PERCENT" 'BEGIN{printf("%d", w*s/100)}')
-  OVERLAY_FINAL_HEIGHT=$(awk -v h="$OVERLAY_HEIGHT" -v s="$OVERLAY_SCALE_PERCENT" 'BEGIN{printf("%d", h*s/100)}')
-  OVERLAY_SIZE_FILTER="scale=${OVERLAY_FINAL_WIDTH}:${OVERLAY_FINAL_HEIGHT}"
-fi
-
 # Auto-detect edge trims if requested
 if { [ "${OVERLAY_EDGE_TRIM_LEFT}" = "auto" ] || [ "${OVERLAY_EDGE_TRIM_RIGHT}" = "auto" ]; }; then
   echo "Auto-detecting overlay side trims..." >&2
@@ -326,33 +318,6 @@ PY
   [ "${OVERLAY_EDGE_TRIM_LEFT}" = "auto" ] && OVERLAY_EDGE_TRIM_LEFT="$AUTO_LEFT"
   [ "${OVERLAY_EDGE_TRIM_RIGHT}" = "auto" ] && OVERLAY_EDGE_TRIM_RIGHT="$AUTO_RIGHT"
 fi
-
-# Calculate position based on OVERLAY_POSITION setting
-case "$OVERLAY_POSITION" in
-  top)
-    OVERLAY_X="(W-w)/2"
-    OVERLAY_Y="0"
-    ;;
-  bottom)
-    OVERLAY_X="(W-w)/2"
-    OVERLAY_Y="H-h"
-    ;;
-  center)
-    OVERLAY_X="(W-w)/2"
-    OVERLAY_Y="(H-h)/2"
-    ;;
-  custom)
-    OVERLAY_X="$OVERLAY_CUSTOM_X"
-    OVERLAY_Y="$OVERLAY_CUSTOM_Y"
-    ;;
-  *)
-    echo "WARN: Invalid OVERLAY_POSITION, using bottom" >&2
-    OVERLAY_X="(W-w)/2"
-    OVERLAY_Y="H-h"
-    ;;
-esac
-
-echo "Overlay positioning: ${OVERLAY_POSITION} at X=${OVERLAY_X}, Y=${OVERLAY_Y}, size=${OVERLAY_FINAL_WIDTH}x${OVERLAY_HEIGHT:-auto}" >&2
 
 # Build overlay effects filter chain
 OVERLAY_PRE_EFFECTS=""
@@ -793,6 +758,7 @@ echo "Main video duration (original): $MAIN_VID_DURATION" >&2
 
 # Calculate proper INPUT_READ_DURATION based on SPEED_FACTOR
 SPEED_FACTOR_N=$(awk -v s="$SPEED_FACTOR" 'BEGIN{ if(s<=0) s=1.0; printf("%.6f", s+0) }')
+OVERLAY_SPEED_FACTOR_N=$(awk -v s="$OVERLAY_SPEED_FACTOR" 'BEGIN{ if(s<=0) s=1.0; printf("%.6f", s+0) }')
 
 # Apply trim with speed factor consideration
 INPUT_READ_DURATION=""
@@ -811,8 +777,12 @@ else
 fi
 
 echo "SPEED_FACTOR: $SPEED_FACTOR_N" >&2
+echo "OVERLAY_SPEED_FACTOR: $OVERLAY_SPEED_FACTOR_N" >&2
 echo "INPUT_READ_DURATION: $INPUT_READ_DURATION (amount to read from files)" >&2
 echo "EFFECTIVE_DURATION: $EFFECTIVE_DURATION (output duration after speed change)" >&2
+
+OVERLAY_READ_DURATION=$(awk -v d="$INPUT_READ_DURATION" -v s="$OVERLAY_SPEED_FACTOR_N" 'BEGIN{ printf("%.3f", d*s) }')
+echo "OVERLAY_READ_DURATION: $OVERLAY_READ_DURATION (source duration before overlay speed adjustment)" >&2
 
 # Rotation and crop filters
 ROTATE_TAG=$(ffprobe -v error -select_streams v:0 -show_entries stream_tags=rotate -of default=nw=1:nk=1 "$INPUT_FILE" 2>/dev/null || printf "0")
@@ -874,6 +844,159 @@ if [ "$CROP_ENABLE" = "true" ]; then
   fi
 fi
 
+# Determine available canvas space for overlay
+MAIN_RES=$(probe_resolution "$INPUT_FILE" || true)
+if [ -n "$MAIN_RES" ]; then
+  MAIN_SRC_W=$(printf "%s" "$MAIN_RES" | awk -Fx '{print $1}')
+  MAIN_SRC_H=$(printf "%s" "$MAIN_RES" | awk -Fx '{print $2}')
+else
+  MAIN_SRC_W=1920; MAIN_SRC_H=1080
+fi
+
+MAIN_KEEP_PCT=100
+if [ "$CROP_ENABLE" = "true" ]; then
+  MAIN_KEEP_PCT=$((100 - ${CROP_TOP_PCT:-0} - ${CROP_BOTTOM_PCT:-0}))
+  if [ "$MAIN_KEEP_PCT" -le 0 ]; then MAIN_KEEP_PCT=100; fi
+fi
+
+MAIN_POST_HEIGHT=$(awk -v h="$MAIN_SRC_H" -v pct="$MAIN_KEEP_PCT" 'BEGIN{ printf("%.6f", h*pct/100.0) }')
+MAIN_SCALED_HEIGHT=$(awk -v cw="$CANVAS_WIDTH" -v mh="$MAIN_POST_HEIGHT" -v mw="$MAIN_SRC_W" 'BEGIN{ if(mw<=0) printf("%.6f", 0); else printf("%.6f", cw*mh/mw) }')
+AVAILABLE_HEIGHT=$(awk -v ch="$CANVAS_HEIGHT" -v mh="$MAIN_SCALED_HEIGHT" 'BEGIN{ v=ch-mh; if (v<0.0) v=ch*0.35; if (v<50) v=ch*0.35; if (v<1) v=1; printf("%.6f", v) }')
+AVAILABLE_HEIGHT_INT=$(awk -v v="$AVAILABLE_HEIGHT" 'BEGIN{ if(v<1) v=1; printf("%d", v) }')
+
+# Overlay aspect after trimming
+TRIM_LEFT_VAL=${OVERLAY_TRIM_LEFT:-0}
+TRIM_RIGHT_VAL=${OVERLAY_TRIM_RIGHT:-0}
+OVERLAY_TRIMMED_WIDTH=$(awk -v w="$O_W" -v l="$TRIM_LEFT_VAL" -v r="$TRIM_RIGHT_VAL" 'BEGIN{ val=w-l-r; if (val<1) val=1; printf("%.6f", val) }')
+OVERLAY_TRIMMED_HEIGHT=$(awk -v h="$O_H" 'BEGIN{ if(h<1) h=1; printf("%.6f", h) }')
+OVERLAY_ASPECT=$(awk -v w="$OVERLAY_TRIMMED_WIDTH" -v h="$OVERLAY_TRIMMED_HEIGHT" 'BEGIN{ if(h<=0) printf("1.0"); else printf("%.6f", w/h) }')
+
+# Resolve user-provided overlay dimensions (pixels, percent, or auto)
+OVERLAY_WIDTH_EXPLICIT=0
+RAW_OVERLAY_WIDTH="$OVERLAY_WIDTH"
+case "$RAW_OVERLAY_WIDTH" in
+  ""|auto|AUTO|Auto)
+    RAW_OVERLAY_WIDTH=""
+    ;;
+  *%)
+    PCT=${RAW_OVERLAY_WIDTH%%%}
+    if [ -n "$PCT" ]; then
+      RAW_OVERLAY_WIDTH=$(awk -v base="$CANVAS_WIDTH" -v pct="$PCT" 'BEGIN{ printf("%.6f", base*pct/100.0) }')
+      OVERLAY_WIDTH_EXPLICIT=1
+    else
+      RAW_OVERLAY_WIDTH=""
+    fi
+    ;;
+  *)
+    RAW_OVERLAY_WIDTH=$(awk -v v="$RAW_OVERLAY_WIDTH" 'BEGIN{ printf("%.6f", v+0) }')
+    OVERLAY_WIDTH_EXPLICIT=1
+    ;;
+esac
+
+OVERLAY_HEIGHT_EXPLICIT=0
+RAW_OVERLAY_HEIGHT="$OVERLAY_HEIGHT"
+case "$RAW_OVERLAY_HEIGHT" in
+  ""|auto|AUTO|Auto)
+    RAW_OVERLAY_HEIGHT=""
+    ;;
+  *%)
+    PCT=${RAW_OVERLAY_HEIGHT%%%}
+    if [ -n "$PCT" ]; then
+      RAW_OVERLAY_HEIGHT=$(awk -v base="$CANVAS_HEIGHT" -v pct="$PCT" 'BEGIN{ printf("%.6f", base*pct/100.0) }')
+      OVERLAY_HEIGHT_EXPLICIT=1
+    else
+      RAW_OVERLAY_HEIGHT=""
+    fi
+    ;;
+  *)
+    RAW_OVERLAY_HEIGHT=$(awk -v v="$RAW_OVERLAY_HEIGHT" 'BEGIN{ printf("%.6f", v+0) }')
+    OVERLAY_HEIGHT_EXPLICIT=1
+    ;;
+esac
+
+WIDTH_BASE="$RAW_OVERLAY_WIDTH"
+HEIGHT_BASE="$RAW_OVERLAY_HEIGHT"
+
+if [ -z "$WIDTH_BASE" ] && [ -z "$HEIGHT_BASE" ]; then
+  HEIGHT_BASE=$AVAILABLE_HEIGHT_INT
+  if [ -z "$HEIGHT_BASE" ] || [ "$HEIGHT_BASE" -le 0 ]; then
+    HEIGHT_BASE=$(awk -v ch="$CANVAS_HEIGHT" 'BEGIN{ printf("%.6f", ch*0.35) }')
+  fi
+  WIDTH_BASE=$(awk -v h="$HEIGHT_BASE" -v aspect="$OVERLAY_ASPECT" 'BEGIN{ printf("%.6f", h*aspect) }')
+elif [ -z "$HEIGHT_BASE" ]; then
+  HEIGHT_BASE=$(awk -v w="$WIDTH_BASE" -v aspect="$OVERLAY_ASPECT" 'BEGIN{ if(aspect<=0) aspect=1; printf("%.6f", w/aspect) }')
+elif [ -z "$WIDTH_BASE" ]; then
+  WIDTH_BASE=$(awk -v h="$HEIGHT_BASE" -v aspect="$OVERLAY_ASPECT" 'BEGIN{ printf("%.6f", h*aspect) }')
+fi
+
+OVERLAY_FINAL_WIDTH=$(awk -v w="$WIDTH_BASE" -v s="$OVERLAY_SCALE_PERCENT" 'BEGIN{ printf("%.6f", w*s/100.0) }')
+OVERLAY_FINAL_HEIGHT=$(awk -v h="$HEIGHT_BASE" -v s="$OVERLAY_SCALE_PERCENT" 'BEGIN{ printf("%.6f", h*s/100.0) }')
+
+OVERLAY_ALLOW_OVERFLOW=$(awk -v s="$OVERLAY_SCALE_PERCENT" 'BEGIN{ if(s=="") s=100; if(s+0>100) print 1; else print 0 }')
+OVERLAY_FINAL_WIDTH_INT=$(awk -v w="$OVERLAY_FINAL_WIDTH" 'BEGIN{ if(w<1) w=1; printf("%d", w) }')
+OVERLAY_FINAL_HEIGHT_INT=$(awk -v h="$OVERLAY_FINAL_HEIGHT" 'BEGIN{ if(h<1) h=1; printf("%d", h) }')
+
+if [ "$OVERLAY_FINAL_WIDTH_INT" -gt "$CANVAS_WIDTH" ]; then
+  if [ "$OVERLAY_WIDTH_EXPLICIT" -eq 0 ]; then
+    OVERLAY_FINAL_WIDTH_INT=$CANVAS_WIDTH
+    OVERLAY_FINAL_HEIGHT_INT=$(awk -v w="$OVERLAY_FINAL_WIDTH_INT" -v aspect="$OVERLAY_ASPECT" 'BEGIN{ if(aspect<=0) aspect=1; val=w/aspect; if(val<1) val=1; printf("%d", val) }')
+  else
+    echo "WARN: overlay width (${OVERLAY_FINAL_WIDTH_INT}px) exceeds canvas width; overlay may spill horizontally." >&2
+  fi
+fi
+
+if [ "$OVERLAY_ALLOW_OVERFLOW" -eq 0 ] && [ "$OVERLAY_HEIGHT_EXPLICIT" -eq 0 ]; then
+  if [ "$AVAILABLE_HEIGHT_INT" -gt 0 ] && [ "$OVERLAY_FINAL_HEIGHT_INT" -gt "$AVAILABLE_HEIGHT_INT" ]; then
+    OVERLAY_FINAL_HEIGHT_INT=$AVAILABLE_HEIGHT_INT
+    OVERLAY_FINAL_WIDTH_INT=$(awk -v h="$OVERLAY_FINAL_HEIGHT_INT" -v aspect="$OVERLAY_ASPECT" 'BEGIN{ val=h*aspect; if(val<1) val=1; printf("%d", val) }')
+    if [ "$OVERLAY_FINAL_WIDTH_INT" -gt "$CANVAS_WIDTH" ]; then
+      OVERLAY_FINAL_WIDTH_INT=$CANVAS_WIDTH
+    fi
+  fi
+fi
+
+if [ "$OVERLAY_FINAL_HEIGHT_INT" -gt "$CANVAS_HEIGHT" ]; then
+  OVERLAY_FINAL_HEIGHT_INT=$CANVAS_HEIGHT
+  if [ "$OVERLAY_HEIGHT_EXPLICIT" -eq 0 ]; then
+    OVERLAY_FINAL_WIDTH_INT=$(awk -v h="$OVERLAY_FINAL_HEIGHT_INT" -v aspect="$OVERLAY_ASPECT" 'BEGIN{ val=h*aspect; if(val<1) val=1; printf("%d", val) }')
+    if [ "$OVERLAY_FINAL_WIDTH_INT" -gt "$CANVAS_WIDTH" ]; then
+      OVERLAY_FINAL_WIDTH_INT=$CANVAS_WIDTH
+    fi
+  fi
+fi
+
+if [ "$OVERLAY_FINAL_WIDTH_INT" -lt 1 ]; then OVERLAY_FINAL_WIDTH_INT=1; fi
+if [ "$OVERLAY_FINAL_HEIGHT_INT" -lt 1 ]; then OVERLAY_FINAL_HEIGHT_INT=1; fi
+
+OVERLAY_SIZE_FILTER="scale=${OVERLAY_FINAL_WIDTH_INT}:${OVERLAY_FINAL_HEIGHT_INT}"
+
+# Calculate position based on OVERLAY_POSITION setting
+case "$OVERLAY_POSITION" in
+  top)
+    OVERLAY_X="(W-w)/2"
+    OVERLAY_Y="0"
+    ;;
+  bottom)
+    OVERLAY_X="(W-w)/2"
+    OVERLAY_Y="H-h"
+    ;;
+  center)
+    OVERLAY_X="(W-w)/2"
+    OVERLAY_Y="(H-h)/2"
+    ;;
+  custom)
+    OVERLAY_X="$OVERLAY_CUSTOM_X"
+    OVERLAY_Y="$OVERLAY_CUSTOM_Y"
+    ;;
+  *)
+    echo "WARN: Invalid OVERLAY_POSITION, using bottom" >&2
+    OVERLAY_X="(W-w)/2"
+    OVERLAY_Y="H-h"
+    ;;
+esac
+
+echo "Overlay positioning: ${OVERLAY_POSITION} at X=${OVERLAY_X}, Y=${OVERLAY_Y}, size=${OVERLAY_FINAL_WIDTH_INT}x${OVERLAY_FINAL_HEIGHT_INT}" >&2
+
 # Mirror filter
 MIRROR_FILTER=""
 if [ "$MIRROR_ENABLE" = "true" ]; then
@@ -907,14 +1030,14 @@ fi
 if [ "$CAPTION_ENABLE" = "true" ]; then
   BASE_FILTER="color=c=black:s=1080x1920:d=${EFFECTIVE_DURATION}[canvas]; \
 [${INPUT_INDEX}:v]trim=duration=${INPUT_READ_DURATION},setpts=PTS-STARTPTS,${ROTATION_FILTER}${CROP_FILTER}scale=1080:-1,${MIRROR_FILTER}format=yuva420p[main_video]; \
-[${OVERLAY_INDEX}:v]trim=duration=${INPUT_READ_DURATION},setpts=PTS-STARTPTS,${OVERLAY_PRE_EFFECTS}${OVERLAY_SIZE_FILTER},${OVERLAY_EFFECTS}fps=${TARGET_FPS},format=yuva420p[overlay_video]; \
+[${OVERLAY_INDEX}:v]trim=duration=${OVERLAY_READ_DURATION},setpts=PTS-STARTPTS,${OVERLAY_PRE_EFFECTS}${OVERLAY_SIZE_FILTER},${OVERLAY_EFFECTS}fps=${TARGET_FPS},setpts=PTS/${OVERLAY_SPEED_FACTOR_N},format=yuva420p[overlay_video]; \
 [canvas][main_video]overlay=(W-w)/2:0[bg_with_main]; \
 [bg_with_main][overlay_video]overlay=${OVERLAY_X}:${OVERLAY_Y}:format=auto:alpha=straight[layout_complete]; \
 [layout_complete][${CAPTION_INDEX}:v]overlay=0:0,setsar=1,format=yuv420p,fps=${TARGET_FPS},setpts=PTS/${SPEED_FACTOR_N}[composed_main]"
 else
   BASE_FILTER="color=c=black:s=1080x1920:d=${EFFECTIVE_DURATION}[canvas]; \
 [${INPUT_INDEX}:v]trim=duration=${INPUT_READ_DURATION},setpts=PTS-STARTPTS,${ROTATION_FILTER}${CROP_FILTER}scale=1080:-1,${MIRROR_FILTER}format=yuva420p[main_video]; \
-[${OVERLAY_INDEX}:v]trim=duration=${INPUT_READ_DURATION},setpts=PTS-STARTPTS,${OVERLAY_PRE_EFFECTS}${OVERLAY_SIZE_FILTER},${OVERLAY_EFFECTS}fps=${TARGET_FPS},format=yuva420p[overlay_video]; \
+[${OVERLAY_INDEX}:v]trim=duration=${OVERLAY_READ_DURATION},setpts=PTS-STARTPTS,${OVERLAY_PRE_EFFECTS}${OVERLAY_SIZE_FILTER},${OVERLAY_EFFECTS}fps=${TARGET_FPS},setpts=PTS/${OVERLAY_SPEED_FACTOR_N},format=yuva420p[overlay_video]; \
 [canvas][main_video]overlay=(W-w)/2:0[bg_with_main]; \
 [bg_with_main][overlay_video]overlay=${OVERLAY_X}:${OVERLAY_Y}:format=auto:alpha=straight,setsar=1,format=yuv420p,fps=${TARGET_FPS},setpts=PTS/${SPEED_FACTOR_N}[composed_main]"
 fi
@@ -957,6 +1080,36 @@ PY
   echo "AUDIO_TEMPO_CHAIN: $AUDIO_TEMPO_CHAIN" >&2
 fi
 
+OVERLAY_ATEMPO_CHAIN=""
+if [ "$OVERLAY_SPEED_FACTOR_N" != "1.000000" ]; then
+  export OVERLAY_SPEED_FACTOR_N
+  OVERLAY_ATEMPO_CHAIN=$(python3 - <<'PY'
+import os
+s = float(os.environ.get('OVERLAY_SPEED_FACTOR_N','1'))
+if s <= 0:
+    print("atempo=1.0")
+else:
+    factors = []
+    tmp = s
+    while tmp > 2.0000001:
+        factors.append(2.0)
+        tmp = tmp / 2.0
+    while tmp < 0.5 - 1e-12:
+        factors.append(0.5)
+        tmp = tmp / 0.5
+    factors.append(round(tmp, 6))
+    out = ",".join(f"atempo={f:.6f}" for f in factors)
+    print(out)
+PY
+)
+  echo "OVERLAY_ATEMPO_CHAIN: $OVERLAY_ATEMPO_CHAIN" >&2
+fi
+
+OVERLAY_AUDIO_RATE_FILTER="asetpts=PTS-STARTPTS"
+if [ -n "$OVERLAY_ATEMPO_CHAIN" ]; then
+  OVERLAY_AUDIO_RATE_FILTER="$OVERLAY_AUDIO_RATE_FILTER,$OVERLAY_ATEMPO_CHAIN"
+fi
+
 # ========== AUDIO HANDLING ==========
 AUDIO_FILTER=""
 AUDIO_MAP="0:a?"
@@ -968,11 +1121,11 @@ if [ "$OVERLAY_AUDIO_ENABLE" = "true" ]; then
   # Build base mixed audio (main + overlay) - use amerge with proper volume normalization
   if [ -n "$AUDIO_TEMPO_CHAIN" ]; then
     BASE_AUDIO_MIX="[0:a]atrim=duration=${INPUT_READ_DURATION},asetpts=PTS-STARTPTS,${AUDIO_TEMPO_CHAIN}[main_tempo]; \
-[${OVERLAY_INDEX}:a]atrim=duration=${INPUT_READ_DURATION},asetpts=PTS-STARTPTS,volume=${OVERLAY_VOLUME_FLOAT}[overlay_vol]; \
+[${OVERLAY_INDEX}:a]atrim=duration=${OVERLAY_READ_DURATION},${OVERLAY_AUDIO_RATE_FILTER},volume=${OVERLAY_VOLUME_FLOAT}[overlay_vol]; \
 [main_tempo][overlay_vol]amix=inputs=2:duration=longest:dropout_transition=2,volume=2[base_mixed]"
   else
     BASE_AUDIO_MIX="[0:a]atrim=duration=${INPUT_READ_DURATION},asetpts=PTS-STARTPTS[main_a]; \
-[${OVERLAY_INDEX}:a]atrim=duration=${INPUT_READ_DURATION},asetpts=PTS-STARTPTS,volume=${OVERLAY_VOLUME_FLOAT}[overlay_vol]; \
+[${OVERLAY_INDEX}:a]atrim=duration=${OVERLAY_READ_DURATION},${OVERLAY_AUDIO_RATE_FILTER},volume=${OVERLAY_VOLUME_FLOAT}[overlay_vol]; \
 [main_a][overlay_vol]amix=inputs=2:duration=longest:dropout_transition=2,volume=2[base_mixed]"
   fi
 
@@ -1101,7 +1254,7 @@ fi
 # Build input args
 INPUT_ARGS=""
 if [ -n "$TRIM_DURATION" ]; then
-  INPUT_ARGS="-t ${INPUT_READ_DURATION} -i \"$INPUT_FILE\" -t ${INPUT_READ_DURATION} -i \"$MERGED_OVERLAY\""
+  INPUT_ARGS="-t ${INPUT_READ_DURATION} -i \"$INPUT_FILE\" -t ${OVERLAY_READ_DURATION} -i \"$MERGED_OVERLAY\""
 else
   INPUT_ARGS="-i \"$INPUT_FILE\" -i \"$MERGED_OVERLAY\""
 fi
