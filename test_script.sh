@@ -30,7 +30,7 @@ set -eu
 # ---------------- CONFIG ----------------
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INPUT_URL="${SCRIPT_DIR}/input.mp4"
-OVERLAY_FILE="${SCRIPT_DIR}/overlay/asif.mp4"  # Using MP4 with green screen
+OVERLAY_FILE="${SCRIPT_DIR}/overlay/kabir.mp4"  # Using MP4 with green screen
 OVERLAY_2=""
 OVERLAY_2_LENGTH_SECONDS=""
 OVERLAY_2_START_SEC="0"
@@ -54,11 +54,11 @@ OVERLAY_POSITION="bottom"
 # For custom position: X and Y coordinates (0-1920 for Y, 0-1080 for X)
 OVERLAY_CUSTOM_X=0
 OVERLAY_CUSTOM_Y=1200
-
 # Overlay size settings
 OVERLAY_WIDTH="100%"               # Width in pixels (max 1080 for full width)
 OVERLAY_HEIGHT="50%"             # Height in pixels (leave empty for auto based on aspect ratio)
 OVERLAY_SCALE_PERCENT=100        # Scale as percentage (100 = original size, 50 = half size)
+OVERLAY_LOOP_ENABLE=true         # Repeat overlay when shorter than main
 
 # Overlay effects
 OVERLAY_OPACITY=100              # Opacity 0-100 (100 = fully opaque, 0 = transparent)
@@ -72,7 +72,7 @@ OVERLAY_EDGE_TRIM_LEFT=""    # Pixels to crop from left edge or "auto"
 OVERLAY_EDGE_TRIM_RIGHT=""   # Pixels to crop from right edge or "auto"
 OVERLAY_AUTO_TRIM_THRESHOLD=25   # Brightness threshold for auto edge trim (0-255)
 OVERLAY_AUTO_TRIM_MARGIN=6       # Extra pixels to trim beyond detected edge (safety buffer)
-OVERLAY_SPEED_FACTOR="2.0"        # Overlay-only speed multiplier (1.0 = original)
+OVERLAY_SPEED_FACTOR="1.0"        # Overlay-only speed multiplier (1.0 = original)
 
 # ========== END OVERLAY SETTINGS ==========
 
@@ -88,7 +88,6 @@ CROP_BOTTOM_PERCENT=30
 
 MAIN_POSITION="top"           # Position main background: top, bottom, center, or custom
 MAIN_CUSTOM_Y=0                # Used when MAIN_POSITION="custom"
-
 
 # Default crop values
 DEFAULT_CROP_TOP_PERCENT=10
@@ -106,7 +105,7 @@ BRIGHTNESS="0.1"
 # Force Instagram-friendly fps
 TARGET_FPS=30
 
-CAPTION_ENABLE=true
+CAPTION_ENABLE=false
 CAPTION_FONT_PATH="/System/Library/Fonts/Supplemental/Arial Bold.ttf"  # macOS default
 CAPTION_POS_X_PERCENT=50
 CAPTION_POS_Y_PERCENT=35
@@ -208,6 +207,11 @@ else
 fi
 FPS_RAW=$(probe_framerate "$OVERLAY_FILE" || true)
 echo "Overlay native resolution: ${O_W}x${O_H} native-fps:${FPS_RAW} -> using TARGET_FPS=${TARGET_FPS}" >&2
+if [ "$OVERLAY_LOOP_ENABLE" = "true" ]; then
+  echo "Overlay looping: enabled" >&2
+else
+  echo "Overlay looping: disabled" >&2
+fi
 
 # Auto-detect edge trims if requested
 if { [ "${OVERLAY_EDGE_TRIM_LEFT}" = "auto" ] || [ "${OVERLAY_EDGE_TRIM_RIGHT}" = "auto" ]; }; then
@@ -1305,10 +1309,14 @@ fi
 
 # Build input args
 INPUT_ARGS=""
+OVERLAY_LOOP_PREFIX=""
+if [ "$OVERLAY_LOOP_ENABLE" = "true" ]; then
+  OVERLAY_LOOP_PREFIX="-stream_loop -1 "
+fi
 if [ -n "$TRIM_DURATION" ]; then
-  INPUT_ARGS="-t ${INPUT_READ_DURATION} -i \"$INPUT_FILE\" -t ${OVERLAY_READ_DURATION} -i \"$MERGED_OVERLAY\""
+  INPUT_ARGS="-t ${INPUT_READ_DURATION} -i \"$INPUT_FILE\" ${OVERLAY_LOOP_PREFIX}-t ${OVERLAY_READ_DURATION} -i \"$MERGED_OVERLAY\""
 else
-  INPUT_ARGS="-i \"$INPUT_FILE\" -i \"$MERGED_OVERLAY\""
+  INPUT_ARGS="-i \"$INPUT_FILE\" ${OVERLAY_LOOP_PREFIX}-i \"$MERGED_OVERLAY\""
 fi
 
 if [ "$CAPTION_ENABLE" = "true" ]; then
