@@ -86,6 +86,9 @@ CROP_TOP_PERCENT=15
 CROP_BOTTOM_ENABLE=true
 CROP_BOTTOM_PERCENT=30
 
+MAIN_POSITION="top"           # Position main background: top, bottom, center, or custom
+MAIN_CUSTOM_Y=0                # Used when MAIN_POSITION="custom"
+
 
 # Default crop values
 DEFAULT_CROP_TOP_PERCENT=10
@@ -997,6 +1000,55 @@ esac
 
 echo "Overlay positioning: ${OVERLAY_POSITION} at X=${OVERLAY_X}, Y=${OVERLAY_Y}, size=${OVERLAY_FINAL_WIDTH_INT}x${OVERLAY_FINAL_HEIGHT_INT}" >&2
 
+# Calculate position based on OVERLAY_POSITION setting
+case "$OVERLAY_POSITION" in
+  top)
+    OVERLAY_X="(W-w)/2"
+    OVERLAY_Y="0"
+    ;;
+  bottom)
+    OVERLAY_X="(W-w)/2"
+    OVERLAY_Y="H-h"
+    ;;
+  center)
+    OVERLAY_X="(W-w)/2"
+    OVERLAY_Y="(H-h)/2"
+    ;;
+  custom)
+    OVERLAY_X="$OVERLAY_CUSTOM_X"
+    OVERLAY_Y="$OVERLAY_CUSTOM_Y"
+    ;;
+  *)
+    echo "WARN: Invalid OVERLAY_POSITION, using bottom" >&2
+    OVERLAY_X="(W-w)/2"
+    OVERLAY_Y="H-h"
+    ;;
+esac
+
+echo "Overlay positioning: ${OVERLAY_POSITION} at X=${OVERLAY_X}, Y=${OVERLAY_Y}, size=${OVERLAY_FINAL_WIDTH_INT}x${OVERLAY_FINAL_HEIGHT_INT}" >&2
+
+# Main video vertical position
+case "$MAIN_POSITION" in
+  top)
+    MAIN_Y="0"
+    ;;
+  bottom)
+    MAIN_Y="H-h"
+    ;;
+  center)
+    MAIN_Y="(H-h)/2"
+    ;;
+  custom)
+    MAIN_Y="$MAIN_CUSTOM_Y"
+    ;;
+  *)
+    echo "WARN: Invalid MAIN_POSITION, using top" >&2
+    MAIN_Y="0"
+    ;;
+esac
+
+echo "Main positioning: ${MAIN_POSITION} at Y=${MAIN_Y}" >&2
+
 # Mirror filter
 MIRROR_FILTER=""
 if [ "$MIRROR_ENABLE" = "true" ]; then
@@ -1031,14 +1083,14 @@ if [ "$CAPTION_ENABLE" = "true" ]; then
   BASE_FILTER="color=c=black:s=1080x1920:d=${EFFECTIVE_DURATION}[canvas]; \
 [${INPUT_INDEX}:v]trim=duration=${INPUT_READ_DURATION},setpts=PTS-STARTPTS,${ROTATION_FILTER}${CROP_FILTER}scale=1080:-1,${MIRROR_FILTER}format=yuva420p[main_video]; \
 [${OVERLAY_INDEX}:v]trim=duration=${OVERLAY_READ_DURATION},setpts=PTS-STARTPTS,${OVERLAY_PRE_EFFECTS}${OVERLAY_SIZE_FILTER},${OVERLAY_EFFECTS}fps=${TARGET_FPS},setpts=PTS/${OVERLAY_SPEED_FACTOR_N},format=yuva420p[overlay_video]; \
-[canvas][main_video]overlay=(W-w)/2:0[bg_with_main]; \
+[canvas][main_video]overlay=(W-w)/2:${MAIN_Y}[bg_with_main]; \
 [bg_with_main][overlay_video]overlay=${OVERLAY_X}:${OVERLAY_Y}:format=auto:alpha=straight[layout_complete]; \
 [layout_complete][${CAPTION_INDEX}:v]overlay=0:0,setsar=1,format=yuv420p,fps=${TARGET_FPS},setpts=PTS/${SPEED_FACTOR_N}[composed_main]"
 else
   BASE_FILTER="color=c=black:s=1080x1920:d=${EFFECTIVE_DURATION}[canvas]; \
 [${INPUT_INDEX}:v]trim=duration=${INPUT_READ_DURATION},setpts=PTS-STARTPTS,${ROTATION_FILTER}${CROP_FILTER}scale=1080:-1,${MIRROR_FILTER}format=yuva420p[main_video]; \
 [${OVERLAY_INDEX}:v]trim=duration=${OVERLAY_READ_DURATION},setpts=PTS-STARTPTS,${OVERLAY_PRE_EFFECTS}${OVERLAY_SIZE_FILTER},${OVERLAY_EFFECTS}fps=${TARGET_FPS},setpts=PTS/${OVERLAY_SPEED_FACTOR_N},format=yuva420p[overlay_video]; \
-[canvas][main_video]overlay=(W-w)/2:0[bg_with_main]; \
+[canvas][main_video]overlay=(W-w)/2:${MAIN_Y}[bg_with_main]; \
 [bg_with_main][overlay_video]overlay=${OVERLAY_X}:${OVERLAY_Y}:format=auto:alpha=straight,setsar=1,format=yuv420p,fps=${TARGET_FPS},setpts=PTS/${SPEED_FACTOR_N}[composed_main]"
 fi
 
